@@ -1,4 +1,4 @@
-module github.com/open-telemetry/opentelemetry-collector-contrib/exporter/clickhouseexporter
+module github.com/NakedFerret/opentelemetry-collector-contrib/exporter/clickhouseexporter
 
 go 1.23.0
 
