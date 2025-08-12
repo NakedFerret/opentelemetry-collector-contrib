@@ -162,6 +162,23 @@ ORDER BY (ServiceName, TimestampTime, Timestamp)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 `
 	// language=ClickHouse SQL
+	createLogsViewSQL = `
+CREATE OR REPLACE VIEW %s.logs AS
+SELECT
+    Timestamp,
+    TraceId,
+    SpanId,
+    SeverityText,
+    SeverityNumber,
+    ServiceName,
+    Body,
+    LogAttributes,
+    ResourceAttributes,
+    ScopeAttributes
+FROM
+    %s.%s;
+`
+	// language=ClickHouse SQL
 	insertLogsSQLTemplate = `INSERT INTO %s (
                         Timestamp,
                         TraceId,
@@ -231,12 +248,22 @@ func createLogsTable(ctx context.Context, cfg *Config, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, renderCreateLogsTableSQL(cfg)); err != nil {
 		return fmt.Errorf("exec create logs table sql: %w", err)
 	}
+
+	// Create simplified logs view
+	if _, err := db.ExecContext(ctx, renderCreateLogsViewSQL(cfg)); err != nil {
+		return fmt.Errorf("exec create logs view sql: %w", err)
+	}
+
 	return nil
 }
 
 func renderCreateLogsTableSQL(cfg *Config) string {
 	ttlExpr := generateTTLExpr(cfg.TTL, "TimestampTime")
 	return fmt.Sprintf(createLogsTableSQL, cfg.LogsTableName, cfg.clusterString(), cfg.tableEngineString(), ttlExpr)
+}
+
+func renderCreateLogsViewSQL(cfg *Config) string {
+	return fmt.Sprintf(createLogsViewSQL, cfg.Database, cfg.Database, cfg.LogsTableName)
 }
 
 func renderInsertLogsSQL(cfg *Config) string {
