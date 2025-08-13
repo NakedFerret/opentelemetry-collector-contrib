@@ -149,8 +149,8 @@ func convertLinks(links ptrace.SpanLinkSlice) (traceIDs []string, spanIDs []stri
 
 const (
 	// language=ClickHouse SQL
-	createTracesTableSQL = `
-CREATE TABLE IF NOT EXISTS %s %s (
+	createSpansTableSQL = `
+CREATE TABLE IF NOT EXISTS otel_spans %s (
 	Timestamp DateTime64(9) CODEC(Delta, ZSTD(1)),
 	TraceId String CODEC(ZSTD(1)),
 	SpanId String CODEC(ZSTD(1)),
@@ -190,7 +190,7 @@ ORDER BY (ServiceName, SpanName, toDateTime(Timestamp))
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
 `
 	// language=ClickHouse SQL
-	insertTracesSQLTemplate = `INSERT INTO %s (
+	insertSpansSQLTemplate = `INSERT INTO otel_spans (
                         Timestamp,
                         TraceId,
                         SpanId,
@@ -240,60 +240,131 @@ SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
 )
 
 const (
-	createTraceIDTsTableSQL = `
-CREATE TABLE IF NOT EXISTS %s_trace_id_ts %s (
-     TraceId String CODEC(ZSTD(1)),
-     Start DateTime CODEC(Delta, ZSTD(1)),
-     End DateTime CODEC(Delta, ZSTD(1)),
-     INDEX idx_trace_id TraceId TYPE bloom_filter(0.01) GRANULARITY 1
-) ENGINE = %s
-PARTITION BY toDate(Start)
-ORDER BY (TraceId, Start)
+	// language=ClickHouse SQL
+	createTracesAggTableSQL = `
+CREATE TABLE IF NOT EXISTS traces_agg %s (
+    TraceId String CODEC(ZSTD(1)),
+    
+    -- Root span information
+    TimestampState AggregateFunction(min, DateTime64(9)) CODEC(ZSTD(1)),
+    SpanNameState AggregateFunction(argMin, LowCardinality(String), DateTime64(9)) CODEC(ZSTD(1)),
+    DurationState AggregateFunction(argMin, UInt64, DateTime64(9)) CODEC(ZSTD(1)),
+    
+    -- Trace-level aggregations
+    SpanCountState AggregateFunction(count, UInt64) CODEC(ZSTD(1)),
+    ServicesState AggregateFunction(groupUniqArray, LowCardinality(String)) CODEC(ZSTD(1)),
+    
+    -- Indexing for fast lookups
+    INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1
+) ENGINE = AggregatingMergeTree()
+ORDER BY TraceId
 %s
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 `
-	createTraceIDTsMaterializedViewSQL = `
-CREATE MATERIALIZED VIEW IF NOT EXISTS %s_trace_id_ts_mv %s
-TO %s.%s_trace_id_ts
-AS SELECT
-	TraceId,
-	min(Timestamp) as Start,
-	max(Timestamp) as End
-FROM
-%s.%s
-WHERE TraceId != ''
+
+	// language=ClickHouse SQL
+	createTracesAggMvSQL = `
+CREATE MATERIALIZED VIEW IF NOT EXISTS traces_agg_mv %s
+TO %s.traces_agg AS
+SELECT
+    TraceId,
+    minState(Timestamp) AS TimestampState,
+    argMinState(SpanName, Timestamp) AS SpanNameState,
+    argMinState(Duration, Timestamp) AS DurationState,
+    countState() AS SpanCountState,
+    groupUniqArrayState(ServiceName) AS ServicesState
+FROM %s.otel_spans
 GROUP BY TraceId;
+`
+
+	// language=ClickHouse SQL
+	createTracesViewSQL = `
+CREATE VIEW IF NOT EXISTS traces %s AS
+SELECT
+    TraceId,
+    -- Extract final values from aggregate functions using State suffix columns
+    minMerge(TimestampState) AS Timestamp,
+    argMinMerge(SpanNameState) AS TraceName,
+    argMinMerge(DurationState) AS Duration,
+    -- Trace-level metrics
+    countMerge(SpanCountState) AS SpanCount,
+    groupUniqArrayMerge(ServicesState) AS Services
+FROM %s.traces_agg
+GROUP BY TraceId;
+`
+
+	// language=ClickHouse SQL
+	createSpansViewSQL = `
+CREATE VIEW IF NOT EXISTS spans %s AS
+SELECT
+    Timestamp,
+    TraceId,
+    SpanId,
+    ParentSpanId,
+    TraceState,
+    SpanName,
+    SpanKind,
+    ServiceName,
+    ResourceAttributes,
+    SpanAttributes,
+    Duration,
+    StatusCode,
+    StatusMessage
+FROM %s.otel_spans;
 `
 )
 
 func createTracesTable(ctx context.Context, cfg *Config, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, renderCreateTracesTableSQL(cfg)); err != nil {
-		return fmt.Errorf("exec create traces table sql: %w", err)
+	// Create the main spans table (renamed from traces)
+	if _, err := db.ExecContext(ctx, renderCreateSpansTableSQL(cfg)); err != nil {
+		return fmt.Errorf("exec create spans table sql: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, renderCreateTraceIDTsTableSQL(cfg)); err != nil {
-		return fmt.Errorf("exec create traceID timestamp table sql: %w", err)
+
+	// Create the traces aggregation table
+	if _, err := db.ExecContext(ctx, renderCreateTracesAggTableSQL(cfg)); err != nil {
+		return fmt.Errorf("exec create traces agg table sql: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, renderTraceIDTsMaterializedViewSQL(cfg)); err != nil {
-		return fmt.Errorf("exec create traceID timestamp view sql: %w", err)
+
+	// Create the materialized view for traces aggregation
+	if _, err := db.ExecContext(ctx, renderCreateTracesAggMvSQL(cfg)); err != nil {
+		return fmt.Errorf("exec create traces agg materialized view sql: %w", err)
 	}
+
+	// Create the traces view for simplified access
+	if _, err := db.ExecContext(ctx, renderCreateTracesViewSQL(cfg)); err != nil {
+		return fmt.Errorf("exec create traces view sql: %w", err)
+	}
+
+	// Create the spans view for simplified access
+	if _, err := db.ExecContext(ctx, renderCreateSpansViewSQL(cfg)); err != nil {
+		return fmt.Errorf("exec create spans view sql: %w", err)
+	}
+
 	return nil
 }
 
 func renderInsertTracesSQL(cfg *Config) string {
-	return fmt.Sprintf(strings.ReplaceAll(insertTracesSQLTemplate, "'", "`"), cfg.TracesTableName)
+	return strings.ReplaceAll(insertSpansSQLTemplate, "'", "`")
 }
 
-func renderCreateTracesTableSQL(cfg *Config) string {
+func renderCreateSpansTableSQL(cfg *Config) string {
 	ttlExpr := generateTTLExpr(cfg.TTL, "toDateTime(Timestamp)")
-	return fmt.Sprintf(createTracesTableSQL, cfg.TracesTableName, cfg.clusterString(), cfg.tableEngineString(), ttlExpr)
+	return fmt.Sprintf(createSpansTableSQL, cfg.clusterString(), cfg.tableEngineString(), ttlExpr)
 }
 
-func renderCreateTraceIDTsTableSQL(cfg *Config) string {
-	ttlExpr := generateTTLExpr(cfg.TTL, "toDateTime(Start)")
-	return fmt.Sprintf(createTraceIDTsTableSQL, cfg.TracesTableName, cfg.clusterString(), cfg.tableEngineString(), ttlExpr)
+func renderCreateTracesAggTableSQL(cfg *Config) string {
+	ttlExpr := generateTTLExpr(cfg.TTL, "toDateTime(minMerge(TimestampState))")
+	return fmt.Sprintf(createTracesAggTableSQL, cfg.clusterString(), ttlExpr)
 }
 
-func renderTraceIDTsMaterializedViewSQL(cfg *Config) string {
-	return fmt.Sprintf(createTraceIDTsMaterializedViewSQL, cfg.TracesTableName,
-		cfg.clusterString(), cfg.Database, cfg.TracesTableName, cfg.Database, cfg.TracesTableName)
+func renderCreateTracesAggMvSQL(cfg *Config) string {
+	return fmt.Sprintf(createTracesAggMvSQL, cfg.clusterString(), cfg.Database, cfg.Database)
+}
+
+func renderCreateTracesViewSQL(cfg *Config) string {
+	return fmt.Sprintf(createTracesViewSQL, cfg.clusterString(), cfg.Database)
+}
+
+func renderCreateSpansViewSQL(cfg *Config) string {
+	return fmt.Sprintf(createSpansViewSQL, cfg.clusterString(), cfg.Database)
 }
