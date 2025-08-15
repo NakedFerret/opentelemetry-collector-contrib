@@ -77,6 +77,8 @@ type MetricTablesConfig struct {
 	Histogram internal.MetricTypeConfig `mapstructure:"histogram"`
 	// ExponentialHistogram is the table name for exponential histogram metric type. default is `otel_metrics_exponential_histogram`.
 	ExponentialHistogram internal.MetricTypeConfig `mapstructure:"exponential_histogram"`
+	// Numeric is the table name for unified numeric metric type (gauge/sum). default is `otel_metrics_numeric`.
+	Numeric internal.MetricTypeConfig `mapstructure:"numeric"`
 }
 
 // TableEngine defines the ENGINE string value when creating the table.
@@ -94,6 +96,7 @@ const (
 	defaultSummarySuffix      = "_summary"
 	defaultHistogramSuffix    = "_histogram"
 	defaultExpHistogramSuffix = "_exponential_histogram"
+	defaultNumericSuffix      = "_numeric"
 )
 
 var (
@@ -204,11 +207,15 @@ func (cfg *Config) buildMetricTableNames() {
 		tableName = cfg.MetricsTableName
 	}
 
+	if len(cfg.MetricsTables.Numeric.Name) == 0 {
+		cfg.MetricsTables.Numeric.Name = tableName + defaultNumericSuffix
+	}
+	// Both gauge and sum use the unified numeric table
 	if len(cfg.MetricsTables.Gauge.Name) == 0 {
-		cfg.MetricsTables.Gauge.Name = tableName + defaultGaugeSuffix
+		cfg.MetricsTables.Gauge.Name = cfg.MetricsTables.Numeric.Name
 	}
 	if len(cfg.MetricsTables.Sum.Name) == 0 {
-		cfg.MetricsTables.Sum.Name = tableName + defaultSumSuffix
+		cfg.MetricsTables.Sum.Name = cfg.MetricsTables.Numeric.Name
 	}
 	if len(cfg.MetricsTables.Summary.Name) == 0 {
 		cfg.MetricsTables.Summary.Name = tableName + defaultSummarySuffix
@@ -226,7 +233,8 @@ func (cfg *Config) areMetricTableNamesSet() bool {
 		len(cfg.MetricsTables.Sum.Name) != 0 ||
 		len(cfg.MetricsTables.Summary.Name) != 0 ||
 		len(cfg.MetricsTables.Histogram.Name) != 0 ||
-		len(cfg.MetricsTables.ExponentialHistogram.Name) != 0
+		len(cfg.MetricsTables.ExponentialHistogram.Name) != 0 ||
+		len(cfg.MetricsTables.Numeric.Name) != 0
 }
 
 // tableEngineString generates the ENGINE string.

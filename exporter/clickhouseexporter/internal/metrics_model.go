@@ -22,8 +22,8 @@ import (
 )
 
 var supportedMetricTypes = map[pmetric.MetricType]string{
-	pmetric.MetricTypeGauge:                createGaugeTableSQL,
-	pmetric.MetricTypeSum:                  createSumTableSQL,
+	pmetric.MetricTypeGauge:                createNumericTableSQL,
+	pmetric.MetricTypeSum:                  createNumericTableSQL,
 	pmetric.MetricTypeHistogram:            createHistogramTableSQL,
 	pmetric.MetricTypeExponentialHistogram: createExpHistogramTableSQL,
 	pmetric.MetricTypeSummary:              createSummaryTableSQL,
@@ -67,17 +67,26 @@ func NewMetricsTable(ctx context.Context, tablesConfig MetricTablesConfigMapper,
 			return fmt.Errorf("exec create metrics table sql: %w", err)
 		}
 	}
+
+	// Create num_metrics view using the numeric table (gauge and sum use same table)
+	if numericConfig, exists := tablesConfig[pmetric.MetricTypeGauge]; exists {
+		viewQuery := fmt.Sprintf(createNumMetricsViewSQL, numericConfig.Name)
+		if _, err := db.ExecContext(ctx, viewQuery); err != nil {
+			return fmt.Errorf("exec create num_metrics view sql: %w", err)
+		}
+	}
+
 	return nil
 }
 
 // NewMetricsModel create a model for contain different metric data
 func NewMetricsModel(tablesConfig MetricTablesConfigMapper) map[pmetric.MetricType]MetricsModel {
 	return map[pmetric.MetricType]MetricsModel{
-		pmetric.MetricTypeGauge: &gaugeMetrics{
-			insertSQL: fmt.Sprintf(insertGaugeTableSQL, tablesConfig[pmetric.MetricTypeGauge].Name),
+		pmetric.MetricTypeGauge: &numericMetrics{
+			insertSQL: fmt.Sprintf(insertNumericTableSQL, tablesConfig[pmetric.MetricTypeGauge].Name),
 		},
-		pmetric.MetricTypeSum: &sumMetrics{
-			insertSQL: fmt.Sprintf(insertSumTableSQL, tablesConfig[pmetric.MetricTypeSum].Name),
+		pmetric.MetricTypeSum: &numericMetrics{
+			insertSQL: fmt.Sprintf(insertNumericTableSQL, tablesConfig[pmetric.MetricTypeSum].Name),
 		},
 		pmetric.MetricTypeHistogram: &histogramMetrics{
 			insertSQL: fmt.Sprintf(insertHistogramTableSQL, tablesConfig[pmetric.MetricTypeHistogram].Name),

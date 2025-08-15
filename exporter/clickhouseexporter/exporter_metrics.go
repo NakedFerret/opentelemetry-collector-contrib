@@ -56,8 +56,8 @@ func (e *metricsExporter) start(ctx context.Context, _ component.Host) error {
 
 func generateMetricTablesConfigMapper(cfg *Config) internal.MetricTablesConfigMapper {
 	return internal.MetricTablesConfigMapper{
-		pmetric.MetricTypeGauge:                cfg.MetricsTables.Gauge,
-		pmetric.MetricTypeSum:                  cfg.MetricsTables.Sum,
+		pmetric.MetricTypeGauge:                cfg.MetricsTables.Numeric,
+		pmetric.MetricTypeSum:                  cfg.MetricsTables.Numeric,
 		pmetric.MetricTypeSummary:              cfg.MetricsTables.Summary,
 		pmetric.MetricTypeHistogram:            cfg.MetricsTables.Histogram,
 		pmetric.MetricTypeExponentialHistogram: cfg.MetricsTables.ExponentialHistogram,
