@@ -79,6 +79,8 @@ type MetricTablesConfig struct {
 	ExponentialHistogram internal.MetricTypeConfig `mapstructure:"exponential_histogram"`
 	// Numeric is the table name for unified numeric metric type (gauge/sum). default is `otel_metrics_numeric`.
 	Numeric internal.MetricTypeConfig `mapstructure:"numeric"`
+	// Distribution is the table name for unified distribution metric type (histogram/exp_histogram). default is `otel_metrics_distribution`.
+	Distribution internal.MetricTypeConfig `mapstructure:"distribution"`
 }
 
 // TableEngine defines the ENGINE string value when creating the table.
@@ -97,6 +99,7 @@ const (
 	defaultHistogramSuffix    = "_histogram"
 	defaultExpHistogramSuffix = "_exponential_histogram"
 	defaultNumericSuffix      = "_numeric"
+	defaultDistributionSuffix = "_distribution"
 )
 
 var (
@@ -217,14 +220,18 @@ func (cfg *Config) buildMetricTableNames() {
 	if len(cfg.MetricsTables.Sum.Name) == 0 {
 		cfg.MetricsTables.Sum.Name = cfg.MetricsTables.Numeric.Name
 	}
-	if len(cfg.MetricsTables.Summary.Name) == 0 {
-		cfg.MetricsTables.Summary.Name = tableName + defaultSummarySuffix
+	if len(cfg.MetricsTables.Distribution.Name) == 0 {
+		cfg.MetricsTables.Distribution.Name = tableName + defaultDistributionSuffix
 	}
+	// Both histogram and exponential histogram use the unified distribution table
 	if len(cfg.MetricsTables.Histogram.Name) == 0 {
-		cfg.MetricsTables.Histogram.Name = tableName + defaultHistogramSuffix
+		cfg.MetricsTables.Histogram.Name = cfg.MetricsTables.Distribution.Name
 	}
 	if len(cfg.MetricsTables.ExponentialHistogram.Name) == 0 {
-		cfg.MetricsTables.ExponentialHistogram.Name = tableName + defaultExpHistogramSuffix
+		cfg.MetricsTables.ExponentialHistogram.Name = cfg.MetricsTables.Distribution.Name
+	}
+	if len(cfg.MetricsTables.Summary.Name) == 0 {
+		cfg.MetricsTables.Summary.Name = tableName + defaultSummarySuffix
 	}
 }
 
@@ -234,7 +241,8 @@ func (cfg *Config) areMetricTableNamesSet() bool {
 		len(cfg.MetricsTables.Summary.Name) != 0 ||
 		len(cfg.MetricsTables.Histogram.Name) != 0 ||
 		len(cfg.MetricsTables.ExponentialHistogram.Name) != 0 ||
-		len(cfg.MetricsTables.Numeric.Name) != 0
+		len(cfg.MetricsTables.Numeric.Name) != 0 ||
+		len(cfg.MetricsTables.Distribution.Name) != 0
 }
 
 // tableEngineString generates the ENGINE string.

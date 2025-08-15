@@ -59,8 +59,8 @@ func generateMetricTablesConfigMapper(cfg *Config) internal.MetricTablesConfigMa
 		pmetric.MetricTypeGauge:                cfg.MetricsTables.Numeric,
 		pmetric.MetricTypeSum:                  cfg.MetricsTables.Numeric,
 		pmetric.MetricTypeSummary:              cfg.MetricsTables.Summary,
-		pmetric.MetricTypeHistogram:            cfg.MetricsTables.Histogram,
-		pmetric.MetricTypeExponentialHistogram: cfg.MetricsTables.ExponentialHistogram,
+		pmetric.MetricTypeHistogram:            cfg.MetricsTables.Distribution,
+		pmetric.MetricTypeExponentialHistogram: cfg.MetricsTables.Distribution,
 	}
 }
 

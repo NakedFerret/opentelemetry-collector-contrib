@@ -24,8 +24,8 @@ import (
 var supportedMetricTypes = map[pmetric.MetricType]string{
 	pmetric.MetricTypeGauge:                createNumericTableSQL,
 	pmetric.MetricTypeSum:                  createNumericTableSQL,
-	pmetric.MetricTypeHistogram:            createHistogramTableSQL,
-	pmetric.MetricTypeExponentialHistogram: createExpHistogramTableSQL,
+	pmetric.MetricTypeHistogram:            createDistributionTableSQL,
+	pmetric.MetricTypeExponentialHistogram: createDistributionTableSQL,
 	pmetric.MetricTypeSummary:              createSummaryTableSQL,
 }
 
@@ -76,6 +76,14 @@ func NewMetricsTable(ctx context.Context, tablesConfig MetricTablesConfigMapper,
 		}
 	}
 
+	// Create dist_metrics view using the distribution table (histogram and exp_histogram use same table)
+	if distributionConfig, exists := tablesConfig[pmetric.MetricTypeHistogram]; exists {
+		viewQuery := fmt.Sprintf(createDistMetricsViewSQL, distributionConfig.Name)
+		if _, err := db.ExecContext(ctx, viewQuery); err != nil {
+			return fmt.Errorf("exec create dist_metrics view sql: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -88,11 +96,11 @@ func NewMetricsModel(tablesConfig MetricTablesConfigMapper) map[pmetric.MetricTy
 		pmetric.MetricTypeSum: &numericMetrics{
 			insertSQL: fmt.Sprintf(insertNumericTableSQL, tablesConfig[pmetric.MetricTypeSum].Name),
 		},
-		pmetric.MetricTypeHistogram: &histogramMetrics{
-			insertSQL: fmt.Sprintf(insertHistogramTableSQL, tablesConfig[pmetric.MetricTypeHistogram].Name),
+		pmetric.MetricTypeHistogram: &distributionMetrics{
+			insertSQL: fmt.Sprintf(insertDistributionTableSQL, tablesConfig[pmetric.MetricTypeHistogram].Name),
 		},
-		pmetric.MetricTypeExponentialHistogram: &expHistogramMetrics{
-			insertSQL: fmt.Sprintf(insertExpHistogramTableSQL, tablesConfig[pmetric.MetricTypeExponentialHistogram].Name),
+		pmetric.MetricTypeExponentialHistogram: &distributionMetrics{
+			insertSQL: fmt.Sprintf(insertDistributionTableSQL, tablesConfig[pmetric.MetricTypeExponentialHistogram].Name),
 		},
 		pmetric.MetricTypeSummary: &summaryMetrics{
 			insertSQL: fmt.Sprintf(insertSummaryTableSQL, tablesConfig[pmetric.MetricTypeSummary].Name),
